@@ -1,7 +1,7 @@
 {
   "name": "app-kho-nhieu-loc",
-  "version": "1.0.0",
-  "description": "App Kho Nhiêu Lộc - vỏ Electron in ngầm Excel",
+  "version": "1.1.0",
+  "description": "App Kho Nhiêu Lộc - Electron: VPS WebApp + CodeSandbox dự phòng, in ngầm Excel",
   "main": "main.js",
   "author": "Nhiêu Lộc",
   "license": "UNLICENSED",

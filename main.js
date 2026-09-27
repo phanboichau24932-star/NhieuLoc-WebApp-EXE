@@ -1,4 +1,5 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs = require('fs');
 const { spawn, exec } = require('child_process'); // 🔴 Thêm module để gọi Excel ngầm
@@ -73,6 +74,60 @@ function loadPrimaryWebApp() {
     }, PRIMARY_LOAD_TIMEOUT_MS);
 }
 
+function isPortableBuild() {
+    return !!process.env.PORTABLE_EXECUTABLE_FILE;
+}
+
+function setupAutoUpdate() {
+    if (!app.isPackaged || process.platform !== 'win32') return;
+
+    // electron-updater cài tự động ổn định cho bản Setup/NSIS.
+    // Bản Portable vẫn chạy bình thường nhưng không tự thay chính file đang mở.
+    if (isPortableBuild()) {
+        console.log('Portable: bỏ qua auto-install, dùng bản Setup để nhận update tự động.');
+        return;
+    }
+
+    autoUpdater.autoDownload = true;
+    autoUpdater.autoInstallOnAppQuit = true;
+
+    autoUpdater.on('error', (err) => {
+        console.log('AutoUpdate lỗi:', err && err.message ? err.message : err);
+    });
+    autoUpdater.on('checking-for-update', () => console.log('Đang kiểm tra cập nhật EXE...'));
+    autoUpdater.on('update-not-available', (info) => console.log('EXE đã mới nhất:', info && info.version));
+    autoUpdater.on('update-available', (info) => console.log('Có bản EXE mới:', info && info.version));
+    autoUpdater.on('download-progress', (p) => {
+        if (p && Number.isFinite(p.percent)) console.log('Đang tải update:', p.percent.toFixed(1) + '%');
+    });
+    autoUpdater.on('update-downloaded', async (info) => {
+        if (!mainWindow || mainWindow.isDestroyed()) return;
+        const version = info && info.version ? info.version : 'mới';
+        const result = await dialog.showMessageBox(mainWindow, {
+            type: 'info',
+            title: 'Cập nhật App Kho Nhiêu Lộc',
+            message: 'Đã tải xong phiên bản ' + version,
+            detail: 'Bấm “Cập nhật ngay” để đóng ứng dụng, cài bản mới và mở lại. Dữ liệu Google/XUAT không bị xóa.',
+            buttons: ['Cập nhật ngay', 'Để sau'],
+            defaultId: 0,
+            cancelId: 1,
+            noLink: true
+        });
+        if (result.response === 0) {
+            clearPrimaryLoadTimer();
+            setImmediate(() => autoUpdater.quitAndInstall(false, true));
+        }
+    });
+
+    const checkNow = () => autoUpdater.checkForUpdates().catch((err) => {
+        console.log('Không kiểm tra được update:', err && err.message ? err.message : err);
+    });
+
+    setTimeout(checkNow, 10000);
+    const timer = setInterval(checkNow, 6 * 60 * 60 * 1000);
+    if (timer && typeof timer.unref === 'function') timer.unref();
+}
+
 // Đường dẫn lưu file config 2 máy in
 const configPath = path.join(app.getPath('userData'), 'printerConfig.json');
 
@@ -124,6 +179,7 @@ function createWindow() {
 
 app.whenReady().then(() => {
     createWindow();
+    setupAutoUpdate();
 
     // 🔴 NUÔI ZOMBIE EXCEL: Mở ngầm 1 process Excel tàng hình khi bật App
     excelZombie = spawn('powershell.exe', [

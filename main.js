@@ -181,6 +181,29 @@ app.whenReady().then(() => {
     createWindow();
     setupAutoUpdate();
 
+    // Canary 1.2.1: chỉ hiện 1 lần để xác nhận auto-update đã chạy thật trên máy.
+    if (app.getVersion() === '1.2.1') {
+        const canaryFile = path.join(app.getPath('userData'), 'autoupdate-1.2.1-confirmed.flag');
+        if (!fs.existsSync(canaryFile)) {
+            setTimeout(async () => {
+                try {
+                    await dialog.showMessageBox(mainWindow, {
+                        type: 'info',
+                        title: 'Cập nhật tự động thành công',
+                        message: 'App Kho Nhiêu Lộc đã tự cập nhật lên v1.2.1',
+                        detail: 'Đây là thông báo kiểm tra một lần. Từ các phiên bản sau app sẽ tiếp tục nhận cập nhật online.',
+                        buttons: ['OK'],
+                        defaultId: 0,
+                        noLink: true
+                    });
+                    fs.writeFileSync(canaryFile, new Date().toISOString(), 'utf8');
+                } catch (err) {
+                    console.log('Không hiện được thông báo canary 1.2.1:', err);
+                }
+            }, 2500);
+        }
+    }
+
     // 🔴 NUÔI ZOMBIE EXCEL: Mở ngầm 1 process Excel tàng hình khi bật App
     excelZombie = spawn('powershell.exe', [
         '-Command', 

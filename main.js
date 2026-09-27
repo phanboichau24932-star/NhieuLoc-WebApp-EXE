@@ -5,6 +5,74 @@ const { spawn, exec } = require('child_process'); // 🔴 Thêm module để g�
 
 let mainWindow;
 
+// 28.09.2026 - WebApp mới ưu tiên VPS, CodeSandbox chỉ làm dự phòng.
+const PRIMARY_WEB_URL = 'https://103.20.102.220/webapp-test/';
+const FALLBACK_WEB_URL = 'https://gz7242.csb.app';
+const PRIMARY_LOAD_TIMEOUT_MS = 15000;
+let webLoadTarget = 'primary';
+let primaryLoadTimer = null;
+
+function clearPrimaryLoadTimer() {
+    if (primaryLoadTimer) {
+        clearTimeout(primaryLoadTimer);
+        primaryLoadTimer = null;
+    }
+}
+
+function offlineHtml(reason) {
+    const safeReason = String(reason || 'Không kết nối được Web App').replace(/[<>&"']/g, '');
+    return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
+        '<title>Nhiêu Lộc - Mất kết nối</title><style>body{font-family:Segoe UI,Arial,sans-serif;background:#f7f7f7;color:#222;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}' +
+        '.box{background:#fff;border:1px solid #ddd;border-radius:12px;padding:28px;max-width:620px;box-shadow:0 8px 28px rgba(0,0,0,.08)}h2{margin-top:0}' +
+        'a{display:inline-block;margin:8px 8px 0 0;padding:10px 14px;border-radius:8px;text-decoration:none;background:#1266d4;color:white}.secondary{background:#555}.hint{color:#666;font-size:13px}</style>' +
+        '</head><body><div class="box"><h2>Web App Nhiêu Lộc chưa kết nối được</h2><p>' + safeReason + '</p>' +
+        '<p>Ứng dụng đã thử VPS và CodeSandbox nhưng cả hai đều chưa mở được.</p>' +
+        '<a href="' + PRIMARY_WEB_URL + '">Thử lại VPS</a><a class="secondary" href="' + FALLBACK_WEB_URL + '">Mở CodeSandbox</a>' +
+        '<p class="hint">Dữ liệu Google/XUAT không bị xóa. Có thể đóng và mở lại ứng dụng để thử lại.</p></div></body></html>';
+}
+
+function showOfflinePage(reason) {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    clearPrimaryLoadTimer();
+    webLoadTarget = 'offline';
+    const url = 'data:text/html;charset=utf-8,' + encodeURIComponent(offlineHtml(reason));
+    mainWindow.loadURL(url).catch(() => {});
+}
+
+function loadFallback(reason) {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (webLoadTarget === 'fallback') return;
+    clearPrimaryLoadTimer();
+    webLoadTarget = 'fallback';
+    console.log('VPS WebApp lỗi, chuyển CodeSandbox:', reason || 'unknown');
+    mainWindow.loadURL(FALLBACK_WEB_URL).catch((err) => {
+        showOfflinePage('CodeSandbox cũng không mở được: ' + (err && err.message ? err.message : err));
+    });
+}
+
+function loadPrimaryWebApp() {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    clearPrimaryLoadTimer();
+    webLoadTarget = 'primary';
+    console.log('Mở WebApp VPS:', PRIMARY_WEB_URL);
+
+    mainWindow.loadURL(PRIMARY_WEB_URL).catch((err) => {
+        if (webLoadTarget === 'primary') {
+            loadFallback(err && err.message ? err.message : err);
+        }
+    });
+
+    primaryLoadTimer = setTimeout(() => {
+        if (!mainWindow || mainWindow.isDestroyed() || webLoadTarget !== 'primary') return;
+        if (mainWindow.webContents.isLoadingMainFrame()) {
+            console.log('VPS quá 15 giây, dùng CodeSandbox dự phòng');
+            webLoadTarget = 'switching';
+            try { mainWindow.webContents.stop(); } catch (_) {}
+            loadFallback('VPS timeout quá 15 giây');
+        }
+    }, PRIMARY_LOAD_TIMEOUT_MS);
+}
+
 // Đường dẫn lưu file config 2 máy in
 const configPath = path.join(app.getPath('userData'), 'printerConfig.json');
 
@@ -23,8 +91,35 @@ function createWindow() {
         }
     });
 
-    // Load web của sếp
-    mainWindow.loadURL('https://gz7242.csb.app'); 
+    // Load WebApp: VPS trước, CodeSandbox dự phòng.
+    mainWindow.webContents.on('did-finish-load', () => {
+        clearPrimaryLoadTimer();
+        console.log('WebApp đã tải:', webLoadTarget, mainWindow.webContents.getURL());
+    });
+
+    mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+        if (!isMainFrame || errorCode === -3) return; // -3 = ERR_ABORTED khi chủ động chuyển URL
+        if (webLoadTarget === 'primary') {
+            loadFallback(`${errorCode} ${errorDescription}`);
+        } else if (webLoadTarget === 'fallback') {
+            showOfflinePage(`CodeSandbox lỗi ${errorCode}: ${errorDescription}`);
+        }
+    });
+
+    // Hai nút trên trang mất kết nối dùng chính cơ chế fallback của app.
+    mainWindow.webContents.on('will-navigate', (event, url) => {
+        if (webLoadTarget !== 'offline') return;
+        if (url === PRIMARY_WEB_URL) {
+            event.preventDefault();
+            loadPrimaryWebApp();
+        } else if (url === FALLBACK_WEB_URL || url === FALLBACK_WEB_URL + '/') {
+            event.preventDefault();
+            webLoadTarget = 'fallback';
+            mainWindow.loadURL(FALLBACK_WEB_URL).catch((err) => showOfflinePage(String(err)));
+        }
+    });
+
+    loadPrimaryWebApp();
 }
 
 app.whenReady().then(() => {
